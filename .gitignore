@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# OpenPI (large, should be cloned separately)
+openpi/
+
+# Test outputs
+test_outputs/
+frames/
+
+# Results
+results/
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Checkpoints (very large, download separately)
+checkpoints/
+*.ckpt
+*.pth
+*.safetensors
+
+# Cache
+.cache/
+*.cache
