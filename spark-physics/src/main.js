@@ -47,6 +47,7 @@ import {
 	spawnSodaCan
 } from "./realistic_objects.js";
 import { createRobotHandGripper, updateGripperMesh, updateGraspedObject } from "./robot_hand.js";
+import { initializeRLSystem } from "./rl_system.js";
 
 // ===================================================================================================
 // CONFIGURATION
@@ -1314,6 +1315,10 @@ async function init() {
 	taskSystem = initializeTaskSystem(world, scene);
 	console.log("✓ Task system initialized");
 
+	// ===== RL SYSTEM INITIALIZATION =====
+	const rlEnv = initializeRLSystem(taskSystem.objectManager, taskSystem.gripper, taskSystem.pathPlanner, world);
+	window.rlEnv = rlEnv;  // Expose for testing
+
 	// ===== REPLACE RED BALL WITH ROBOT HAND =====
 	// Use the first spawned block position from your console log: (0.60, -2.07, 7.38)
 	const robotHandPosition = { x: 0.6, y: -2.6, z: 7.4 };
@@ -1385,6 +1390,11 @@ async function init() {
 	console.log("  taskSystem.objectManager.findObjects({ group: 'trash' })");
 	console.log("  taskSystem.objectManager.findObjects({ group: 'utensils' })");
 	console.log("  taskSystem.objectManager.findObjects({ group: 'books' })");
+	console.log("\n🤖 RL Environment Commands:");
+	console.log("  rlEnv.autoDetectTable()  ← Auto-detect desk bounds");
+	console.log("  rlEnv.reset(2)  ← Reset episode (world 2)");
+	console.log("  rlEnv.getState()  ← Get state for RL policy");
+	console.log("  rlEnv.normalizeState(state)  ← Normalize for transfer learning");
 
 	// Helper to calculate desk bounds from spawned objects
 	window.getDeskBounds = () => {
