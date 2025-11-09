@@ -141,7 +141,7 @@ export async function spawnPen(world, scene, camera, jengaBlocks, bodyToMesh, me
         const penModel = await loadModel('/models/pen.glb');
         penModel.scale.set(0.000118, 0.000592, 0.000118);  // 1.3x smaller again
         penModel.position.copy(spawnPos);
-        penModel.rotation.set(Math.PI / 2, 0, 0);  // Rotate around X to lay flat
+        penModel.rotation.set(Math.PI / 2, 0, Math.PI);  // Horizontal + flip 180°
 
         // Enable emissive for hover highlighting
         penModel.traverse((child) => {

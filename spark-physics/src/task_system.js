@@ -178,9 +178,13 @@ export class AutoGripper {
     const step = Math.min(this.moveSpeed * deltaTime, distance);
     const ratio = step / distance;
 
+    // Constrain Y to never go below desk surface (prevent going under)
+    const nextY = current.y + dy * ratio;
+    const clampedY = Math.max(nextY, -3.0);  // Never below Y = -3.0
+
     this.body.setNextKinematicTranslation({
       x: current.x + dx * ratio,
-      y: current.y + dy * ratio,
+      y: clampedY,
       z: current.z + dz * ratio
     });
 
@@ -188,15 +192,32 @@ export class AutoGripper {
   }
 
   /**
-   * Attempt to grasp nearby object
+   * Attempt to grasp specific target object
    */
-  grasp(objectManager) {
+  grasp(objectManager, targetObject = null) {
     if (this.graspedObject) return false;  // Already holding
 
     const gripperPos = this.body.translation();
     const GRASP_DISTANCE = 0.5;  // Larger threshold for scaled world
 
-    // Find closest object within grasp range
+    // If specific target provided, try to grasp only that object
+    if (targetObject) {
+      const objPos = targetObject.body.translation();
+      const dx = objPos.x - gripperPos.x;
+      const dy = objPos.y - gripperPos.y;
+      const dz = objPos.z - gripperPos.z;
+      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+      if (dist < GRASP_DISTANCE) {
+        targetObject.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased);
+        this.graspedObject = targetObject;
+        console.log(`✓ Grasped object ${targetObject.id} (${targetObject.type})`);
+        return true;
+      }
+      return false;  // Target not in range
+    }
+
+    // Fallback: Find closest object within grasp range (for manual control)
     for (const obj of objectManager.objects) {
       const objPos = obj.body.translation();
       const dx = objPos.x - gripperPos.x;
@@ -205,8 +226,6 @@ export class AutoGripper {
       const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
 
       if (dist < GRASP_DISTANCE) {
-        // Attach object by setting it as kinematic and parenting to gripper
-        // Simpler than joints, more reliable
         obj.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased);
         this.graspedObject = obj;
         console.log(`✓ Grasped object ${obj.id} (${obj.type})`);
@@ -315,10 +334,32 @@ export class LanguageParser {
  * Simple path planner (straight-line with collision avoidance)
  */
 export class PathPlanner {
-  constructor(objectManager, tableCenter = { x: 1.5, y: -2.0, z: 6.5 }, tableRadius = 1.2) {
+  constructor(objectManager, tableCenter = { x: 1.5, y: -2.5, z: 7.2 }, tableRadius = 2.0) {
     this.objectManager = objectManager;
     this.tableCenter = tableCenter;
     this.tableRadius = tableRadius;
+
+    // Desk bounds (expanded to catch ALL objects on desk)
+    this.deskBounds = {
+      minX: -0.5,   // Expanded to catch edge objects
+      maxX: 3.5,    // Expanded
+      minY: -3.5,   // Expanded down (catch objects in mesh)
+      maxY: -0.5,   // Expanded up
+      minZ: 5.0,    // Back edge (expanded)
+      maxZ: 9.0     // Front edge (expanded)
+    };
+  }
+
+  /**
+   * Check if object is on desk (not fallen off)
+   */
+  isOnDesk(position) {
+    return position.x >= this.deskBounds.minX &&
+           position.x <= this.deskBounds.maxX &&
+           position.y >= this.deskBounds.minY &&
+           position.y <= this.deskBounds.maxY &&
+           position.z >= this.deskBounds.minZ &&
+           position.z <= this.deskBounds.maxZ;
   }
 
   /**
@@ -345,11 +386,14 @@ export class PathPlanner {
    */
   getTargetZones(taskType) {
     const zones = {
-      'corner': { x: this.tableCenter.x + 0.8, y: this.tableCenter.y, z: this.tableCenter.z + 0.8 },
-      'left': { x: this.tableCenter.x - 0.8, y: this.tableCenter.y, z: this.tableCenter.z },
-      'right': { x: this.tableCenter.x + 0.8, y: this.tableCenter.y, z: this.tableCenter.z },
-      'center': { x: this.tableCenter.x, y: this.tableCenter.y, z: this.tableCenter.z },
-      'off_table': { x: this.tableCenter.x - 2.0, y: -3.0, z: this.tableCenter.z }  // Floor far from desk
+      // Organize zones (ON desk surface, well within bounds)
+      'left': { x: this.deskBounds.minX + 0.5, y: -2.5, z: this.tableCenter.z },  // Left side, safely on desk
+      'right': { x: this.deskBounds.maxX - 0.5, y: -2.5, z: this.tableCenter.z }, // Right side, safely on desk
+      'corner': { x: this.deskBounds.maxX - 0.5, y: -2.5, z: this.deskBounds.maxZ - 0.5 },
+      'center': { x: this.tableCenter.x, y: -2.5, z: this.tableCenter.z },
+
+      // Trash zone (OFF desk edge, drop over left edge)
+      'off_table': { x: this.deskBounds.minX - 0.3, y: -2.5, z: this.tableCenter.z }  // Just off left edge
     };
 
     return zones[taskType] || zones['center'];
@@ -401,56 +445,83 @@ export class TaskExecutor {
     const tasks = [];
 
     if (parsed.type === 'clean_table') {
-      // Move ONLY TRASH objects off table to floor
-      const trashObjects = this.objectManager.findObjects({ group: 'trash' });
+      // Move ONLY TRASH objects that are ON desk
+      const allTrash = this.objectManager.findObjects({ group: 'trash' });
+
+      console.log(`  🔍 All objects:`, this.objectManager.objects.map(o => ({id: o.id, type: o.type, group: o.group})));
+      console.log(`  🗑️ Trash filter found:`, allTrash.map(o => ({id: o.id, type: o.type, group: o.group})));
+
+      const trashOnDesk = allTrash.filter(obj => {
+        const pos = obj.body.translation();
+        const onDesk = this.pathPlanner.isOnDesk(pos);
+        console.log(`    Object ${obj.id} (${obj.type}, group:'${obj.group}'): pos=(${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}) onDesk=${onDesk}`);
+        return onDesk;
+      });
+
       const target = this.pathPlanner.getTargetZones('off_table');
 
-      console.log(`  🗑️ Found ${trashObjects.length} trash items to remove`);
+      console.log(`  ✅ Final trash to remove: ${trashOnDesk.length} items`);
 
-      trashObjects.forEach((obj, idx) => {
+      trashOnDesk.forEach((obj, idx) => {
         tasks.push({
           type: 'pick_and_place',
           object: obj,
           target: {
-            x: target.x + (idx * 0.3),  // Spread trash out on floor
-            y: target.y,
-            z: target.z + (idx % 2) * 0.3  // Stagger in 2 rows
+            x: target.x,  // Drop off left edge
+            y: -2.5,  // Desk surface height
+            z: target.z + (idx * 0.2)  // Spread along edge
           }
         });
       });
     }
 
     else if (parsed.type === 'organize_desk') {
-      // Organize items: utensils → left, books → right
-      const utensils = this.objectManager.findObjects({ group: 'utensils' });
-      const books = this.objectManager.findObjects({ group: 'books' });
+      // Organize ONLY items that are ON desk
+      const allUtensils = this.objectManager.findObjects({ group: 'utensils' });
+      const allBooks = this.objectManager.findObjects({ group: 'books' });
 
-      console.log(`  Organizing ${utensils.length} utensils and ${books.length} books`);
+      console.log(`  🔍 Found ${allUtensils.length} utensils, ${allBooks.length} books total`);
 
-      // Utensils go to left side of desk
-      const utensilsTarget = this.pathPlanner.getTargetZones('left');
+      const utensils = allUtensils.filter(obj => {
+        const pos = obj.body.translation();
+        const onDesk = this.pathPlanner.isOnDesk(pos);
+        console.log(`    Utensil ${obj.id} (${obj.type}): pos=(${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}) onDesk=${onDesk}`);
+        return onDesk;
+      });
+
+      const books = allBooks.filter(obj => {
+        const pos = obj.body.translation();
+        const onDesk = this.pathPlanner.isOnDesk(pos);
+        console.log(`    Book ${obj.id}: pos=(${pos.x.toFixed(2)}, ${pos.y.toFixed(2)}, ${pos.z.toFixed(2)}) onDesk=${onDesk}`);
+        return onDesk;
+      });
+
+      console.log(`  📐 Organizing ${utensils.length} utensils and ${books.length} books (on desk)`);
+
+      // Utensils to left corner (grid layout, no stacking)
+      const leftTarget = this.pathPlanner.getTargetZones('left');
       utensils.forEach((obj, idx) => {
         tasks.push({
           type: 'pick_and_place',
           object: obj,
           target: {
-            ...utensilsTarget,
-            x: utensilsTarget.x + (idx * 0.15),  // Line them up
-            z: utensilsTarget.z + (idx % 2) * 0.1  // Stagger slightly
+            x: leftTarget.x + (idx % 3) * 0.2,  // 3 columns
+            y: leftTarget.y,
+            z: leftTarget.z + Math.floor(idx / 3) * 0.25  // Rows
           }
         });
       });
 
-      // Books go to right side of desk
+      // Books to right corner (grid layout, no stacking)
       const booksTarget = this.pathPlanner.getTargetZones('right');
       books.forEach((obj, idx) => {
         tasks.push({
           type: 'pick_and_place',
           object: obj,
           target: {
-            ...booksTarget,
-            x: booksTarget.x + (idx * 0.2),  // Stack books
-            z: booksTarget.z
+            x: booksTarget.x - (idx % 2) * 0.3,  // 2 columns
+            y: booksTarget.y,
+            z: booksTarget.z + Math.floor(idx / 2) * 0.3  // Rows
           }
         });
       });
@@ -512,12 +583,41 @@ export class TaskExecutor {
    * Update task execution (call every frame)
    */
   update(deltaTime) {
-    if (!this.executing || this.taskQueue.length === 0) return;
+    if (!this.executing) {
+      // Don't log every frame, just return
+      return;
+    }
+
+    if (this.taskQueue.length === 0) {
+      this.executing = false;
+      console.log('✅ Task queue empty, stopping executor');
+      return;
+    }
 
     const task = this.taskQueue[0];
 
+    if (!task) {
+      console.error('❌ Task is undefined but queue length is', this.taskQueue.length);
+      this.taskQueue = [];
+      this.executing = false;
+      return;
+    }
+
+    if (!task.object || !task.object.body) {
+      console.error(`❌ Task object invalid for task:`, task);
+      this.taskQueue.shift();
+      this.currentAction = null;
+      return;
+    }
+
     if (task.type === 'pick_and_place') {
-      this.executePickAndPlace(task, deltaTime);
+      try {
+        this.executePickAndPlace(task, deltaTime);
+      } catch (error) {
+        console.error(`❌ Error executing task:`, error);
+        this.taskQueue.shift();
+        this.currentAction = null;
+      }
     }
   }
 
@@ -528,6 +628,8 @@ export class TaskExecutor {
     if (!this.currentAction) {
       this.currentAction = 'approach';
       this.currentWaypoint = 0;
+      this.pickupPosition = null;  // Initialize pickup position storage
+      console.log(`  🎯 Starting task for object ${task.object.id} (${task.object.type}, group:'${task.object.group}')`);
     }
 
     if (this.currentAction === 'approach') {
@@ -541,36 +643,44 @@ export class TaskExecutor {
     }
 
     else if (this.currentAction === 'grasp') {
-      // Grasp object
-      if (this.gripper.grasp(this.objectManager)) {
+      // Grasp SPECIFIC target object (not just any nearby object)
+      const grasped = this.gripper.grasp(this.objectManager, task.object);
+
+      if (grasped) {
+        const objPos = task.object.body.translation();
+        this.pickupPosition = { x: objPos.x, y: objPos.y, z: objPos.z };  // Store ONCE
         this.currentAction = 'lift';
+        this.graspAttempts = 0;
+      } else {
+        // Failed to grasp - retry or skip
+        this.graspAttempts = (this.graspAttempts || 0) + 1;
+
+        if (this.graspAttempts > 60) {  // After 60 attempts (~1 second), skip this object
+          console.warn(`  ⚠ Failed to grasp object ${task.object.id} (${task.object.type}), skipping`);
+          this.taskQueue.shift();
+          this.currentAction = null;
+          this.graspAttempts = 0;
+        }
       }
     }
 
     else if (this.currentAction === 'lift') {
-      // Lift object to safe height (absolute Y, not relative)
-      const objPos = task.object.body.translation();
-      const liftHeight = Math.max(objPos.y + 0.3, -1.5);  // Lift 0.3m above object, min Y=-1.5
-
-      if (this.gripper.moveTo({ x: objPos.x, y: liftHeight, z: objPos.z }, deltaTime)) {
-        this.currentAction = 'transport';
-        this.liftHeight = liftHeight;  // Store for transport phase
-      }
+      // Skip lift - just go straight to transport
+      // Objects have locked rotations, safe to slide
+      this.currentAction = 'transport';
     }
 
     else if (this.currentAction === 'transport') {
-      // Move to target XZ at lift height
-      const transportHeight = this.liftHeight || -1.5;
-      if (this.gripper.moveTo({ x: task.target.x, y: transportHeight, z: task.target.z }, deltaTime)) {
-        this.currentAction = 'lower';
+      // Move to target at DESK HEIGHT (no Z movement, stay on desk)
+      const deskHeight = -2.5;  // Stay on desk surface
+      if (this.gripper.moveTo({ x: task.target.x, y: deskHeight, z: task.target.z }, deltaTime)) {
+        this.currentAction = 'release';
       }
     }
 
     else if (this.currentAction === 'lower') {
-      // Lower to placement height
-      if (this.gripper.moveTo(task.target, deltaTime)) {
-        this.currentAction = 'release';
-      }
+      // Skip lower - already at desk height
+      this.currentAction = 'release';
     }
 
     else if (this.currentAction === 'release') {
@@ -580,21 +690,19 @@ export class TaskExecutor {
     }
 
     else if (this.currentAction === 'retreat') {
-      // Move gripper to safe parking position
-      const parkingHeight = -1.5;  // Fixed height above desk
-      const current = this.gripper.getPosition();
+      // Skip retreat - stay where we are, move to next task
+      // Task complete
+      console.log(`  ✓ Completed task for object ${task.object.id} (${task.object.type})`);
+      this.taskQueue.shift();
+      this.currentAction = null;
+      this.pickupPosition = null;  // Reset pickup position
 
-      if (this.gripper.moveTo({ x: current.x, y: parkingHeight, z: current.z }, deltaTime)) {
-        // Task complete
-        console.log(`  ✓ Completed task for object ${task.object.id}`);
-        this.taskQueue.shift();
-        this.currentAction = null;
-        this.liftHeight = null;  // Reset lift height
+      const remaining = this.taskQueue.length;
+      console.log(`  📋 ${remaining} tasks remaining`);
 
-        if (this.taskQueue.length === 0) {
-          this.executing = false;
-          console.log('🎉 All tasks completed!');
-        }
+      if (remaining === 0) {
+        this.executing = false;
+        console.log('🎉 All tasks completed!');
       }
     }
   }
