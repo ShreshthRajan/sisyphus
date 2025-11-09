@@ -37,6 +37,17 @@ import { PointerLockControls } from "three/examples/jsm/controls/PointerLockCont
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
+import { initializeTaskSystem } from "./task_system.js";
+import {
+	spawnPencil,
+	spawnPen,
+	spawnMarker,
+	spawnBook,
+	spawnCrumpledPaper,
+	spawnSodaCan
+} from "./realistic_objects.js";
+import { createRobotHandGripper, updateGripperMesh, updateGraspedObject } from "./robot_hand.js";
+
 // ===================================================================================================
 // CONFIGURATION
 // ===================================================================================================
@@ -422,19 +433,22 @@ async function init() {
 	}
 	
 	// Function to spawn a single block at camera position
+	// Will be initialized after task system
+	let taskSystem = null;
+
 	function spawnBlock() {
 		const cfg = CONFIG.JENGA;
 		const scale = cfg.SCALE;
 		const brickLen = cfg.BRICK.LEN * scale;
 		const brickWid = cfg.BRICK.WID * scale;
 		const brickHt = cfg.BRICK.HT * scale;
-		
+
 		// Spawn in front of camera
 		const forward = new THREE.Vector3();
 		camera.getWorldDirection(forward);
 		forward.normalize();
 		const spawnPos = camera.position.clone().addScaledVector(forward, 2.0);
-		
+
 		// Random orientation
 		const alongZ = Math.random() > 0.5;
 		const sizeX = alongZ ? brickWid : brickLen;
@@ -442,18 +456,22 @@ async function init() {
 		const halfX = sizeX / 2;
 		const halfY = brickHt / 2;
 		const halfZ = sizeZ / 2;
-		
+
+		// Random color for variety
+		const colors = [0xff0000, 0x0000ff, 0x00ff00, 0xffff00, 0xff00ff, 0x00ffff];
+		const color = colors[Math.floor(Math.random() * colors.length)];
+
 		// THREE mesh
 		const geom = new THREE.BoxGeometry(sizeX, brickHt, sizeZ);
-		const mat = new THREE.MeshStandardMaterial({ 
-			color: 0x0f0fff, 
-			metalness: 0.1, 
-			roughness: 0.8 
+		const mat = new THREE.MeshStandardMaterial({
+			color,
+			metalness: 0.1,
+			roughness: 0.8
 		});
 		const mesh = new THREE.Mesh(geom, mat);
 		mesh.position.copy(spawnPos);
 		scene.add(mesh);
-		
+
 		// Rapier body + collider
 		const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
 			.setTranslation(spawnPos.x, spawnPos.y, spawnPos.z)
@@ -465,13 +483,29 @@ async function init() {
 			.setFriction(0.8)
 			.setRestitution(0.05);
 		world.createCollider(collider, body);
-		
-		// Track mesh with body
+
+		// Track mesh with body (existing system)
 		jengaBlocks.push({ mesh, body });
 		bodyToMesh.set(body.handle, mesh);
 		meshToBody.set(mesh, body);
 		grabbableMeshes.push(mesh);
-		
+
+		// ALSO add to task system ObjectManager
+		if (taskSystem) {
+			const objData = {
+				id: taskSystem.objectManager.nextId++,
+				type: 'block',
+				color,
+				group: 'items',
+				radius: Math.max(halfX, halfZ),
+				height: brickHt,
+				body,
+				mesh
+			};
+			taskSystem.objectManager.objects.push(objData);
+			taskSystem.objectManager.bodyToObject.set(body.handle, objData);
+		}
+
 		console.log(`📦 Block spawned at (${spawnPos.x.toFixed(2)}, ${spawnPos.y.toFixed(2)}, ${spawnPos.z.toFixed(2)})`);
 	}
 
@@ -907,6 +941,28 @@ async function init() {
 			spawnBlock();
 		}
 
+		// ===== REALISTIC OBJECT SPAWNING (Keys 1-6) =====
+		if (controls.isLocked) {
+			if (e.code === "Digit1") {
+				spawnPencil(world, scene, camera, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem);
+			}
+			if (e.code === "Digit2") {
+				spawnPen(world, scene, camera, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem);
+			}
+			if (e.code === "Digit3") {
+				spawnMarker(world, scene, camera, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem);
+			}
+			if (e.code === "Digit4") {
+				spawnBook(world, scene, camera, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem);
+			}
+			if (e.code === "Digit5") {
+				spawnCrumpledPaper(world, scene, camera, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem);
+			}
+			if (e.code === "Digit6") {
+				spawnSodaCan(world, scene, camera, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem);
+			}
+		}
+
 		// Print player position and orientation (yaw/pitch) on 'P'
 		if (e.code === "KeyP") {
 			if (playerBody) {
@@ -1207,6 +1263,76 @@ async function init() {
 		projectileBodies.add(body.handle);
 	}
 
+	// ===== TASK SYSTEM INITIALIZATION =====
+	taskSystem = initializeTaskSystem(world, scene);
+	console.log("✓ Task system initialized");
+
+	// ===== REPLACE RED BALL WITH ROBOT HAND =====
+	// Use the first spawned block position from your console log: (0.60, -2.07, 7.38)
+	const robotHandPosition = { x: 0.6, y: -2.6, z: 7.4 };
+	createRobotHandGripper(world, scene, robotHandPosition).then((robotHand) => {
+		// Remove old red ball gripper
+		scene.remove(taskSystem.gripper.mesh);
+		world.removeRigidBody(taskSystem.gripper.body);
+
+		// Replace with robot hand
+		taskSystem.gripper.mesh = robotHand.mesh;
+		taskSystem.gripper.body = robotHand.body;
+
+		// Move to initial position
+		taskSystem.gripper.body.setTranslation(robotHandPosition, true);
+
+		console.log("✓ Shrek gripper installed");
+	}).catch((error) => {
+		console.warn("Shrek failed to load, keeping red ball gripper:", error);
+	});
+
+	// Expose task system globally for console testing
+	window.taskSystem = taskSystem;
+	window.testCommand = (cmd) => taskSystem.executor.executeCommand(cmd);
+	window.jengaBlocks = jengaBlocks;  // Expose for state queries
+
+	// Complete state getter for all objects
+	window.getState = () => {
+		return jengaBlocks.map((block, idx) => {
+			const pos = block.body.translation();
+			const vel = block.body.linvel();
+			const rot = block.body.rotation();
+			const angVel = block.body.angvel();
+
+			return {
+				id: idx,
+				position: { x: pos.x, y: pos.y, z: pos.z },
+				rotation: { x: rot.x, y: rot.y, z: rot.z, w: rot.w },
+				velocity: { x: vel.x, y: vel.y, z: vel.z },
+				angularVelocity: { x: angVel.x, y: angVel.y, z: angVel.z },
+				isMoving: Math.abs(vel.x) + Math.abs(vel.y) + Math.abs(vel.z) > 0.01
+			};
+		});
+	};
+
+	// Test primitive actions
+	window.testMove = (x, y, z) => {
+		taskSystem.gripper.targetPosition = {x, y, z};
+		console.log(`🎯 Moving gripper to (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`);
+	};
+	window.testGrasp = () => {
+		const success = taskSystem.gripper.grasp(taskSystem.objectManager);
+		console.log(success ? '✓ Grasped' : '✗ No object nearby');
+	};
+	window.testRelease = () => {
+		const success = taskSystem.gripper.release();
+		console.log(success ? '✓ Released' : '✗ Not holding anything');
+	};
+
+	console.log("\n🎮 Commands:");
+	console.log("  getState()  ← Get all object states");
+	console.log("  testMove(x, y, z)  ← Move gripper to position");
+	console.log("  testGrasp()  ← Grasp nearby object");
+	console.log("  testRelease()  ← Release held object");
+	console.log("\n  testCommand('clean table')");
+	console.log("  testCommand('organize by color')");
+
 	// ===== ANIMATION LOOP =====
 	let previousTime = performance.now();
 	let physicsAccumulator = 0;
@@ -1339,9 +1465,22 @@ async function init() {
 					bone.getWorldPosition(sphere.position);
 				}
 			}
-
-			
 		}
+
+		// Update task system
+		taskSystem.objectManager.updateMeshes();
+		taskSystem.gripper.updateMesh();
+
+		// Move gripper to target if set (continuous movement until reached)
+		if (taskSystem.gripper.targetPosition) {
+			const reached = taskSystem.gripper.moveTo(taskSystem.gripper.targetPosition, frameTime);
+			if (reached) {
+				console.log('✓ Reached target position');
+				taskSystem.gripper.targetPosition = null;
+			}
+		}
+
+		taskSystem.executor.update(frameTime);
 
 		renderer.render(scene, camera);
 	}
