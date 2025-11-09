@@ -5,17 +5,20 @@ Enterprise-grade implementation with robust error handling and optimized perform
 
 import pybullet as p
 import numpy as np
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 from dataclasses import dataclass
+from coordinate_mapper import CoordinateMapper
 
 
 @dataclass
 class SimState:
     """Immutable state snapshot from physics simulation."""
-    gripper_pos: np.ndarray  # (3,) [x, y, z]
-    marker_pos: np.ndarray   # (3,) [x, y, z]
-    cap_pos: np.ndarray      # (3,) [x, y, z]
-    grasped: bool
+    gripper_pos: np.ndarray          # (3,) [x, y, z]
+    object_to_pickup_pos: np.ndarray # (3,) [x, y, z] - main object
+    obstacle_1_pos: np.ndarray       # (3,) [x, y, z] - clutter
+    obstacle_2_pos: np.ndarray       # (3,) [x, y, z] - clutter
+    target_pos: np.ndarray           # (3,) [x, y, z] - goal zone
+    grasped_object_id: Optional[int] # Which object is currently grasped (None if none)
     gripper_closed: bool
     step_count: int
 
@@ -75,18 +78,21 @@ class PickPlaceSimulation:
         self._create_environment()
 
         # Dynamic objects (created on reset)
-        self.marker_id: Optional[int] = None
-        self.cap_id: Optional[int] = None
+        self.object_to_pickup_id: Optional[int] = None
+        self.obstacle_1_id: Optional[int] = None
+        self.obstacle_2_id: Optional[int] = None
+        self.target_marker_id: Optional[int] = None
         self.gripper_id: Optional[int] = None
         self.grasp_constraint: Optional[int] = None
 
         # State tracking
         self.gripper_pos = np.array([0.0, 0.0, self.GRIPPER_START_HEIGHT])
         self.gripper_closed = False
-        self.grasped = False
+        self.grasped_object_id: Optional[int] = None
         self.step_count = 0
-        self.marker_start_pos: Optional[np.ndarray] = None
-        self.cap_goal_pos: Optional[np.ndarray] = None
+
+        # Object positions (set on reset)
+        self.object_positions: Dict[str, np.ndarray] = {}
 
     def _create_collision_shapes(self):
         """Pre-create reusable collision shapes for performance."""
@@ -128,59 +134,81 @@ class PickPlaceSimulation:
             physicsClientId=self.client
         )
 
-    def reset(self, marker_start: Tuple[float, float], floor_goal: Tuple[float, float]) -> SimState:
+    def reset(self, world_id: int) -> SimState:
         """
-        Reset simulation with new object positions.
+        Reset simulation with object positions from manual calibration.
 
         Args:
-            marker_start: (x, y) position for marker (object to move) on table
-            floor_goal: (x, y) position for goal location on floor
+            world_id: Which world to load positions from (1, 2, or 3)
 
         Returns:
             Initial state after reset
         """
+        # Get 3D positions from manual calibration
+        mapper = CoordinateMapper(world_id)
+        positions_3d = mapper.get_initial_object_positions_3d()
+
         # Remove old objects if they exist
-        if self.marker_id is not None:
-            p.removeBody(self.marker_id, physicsClientId=self.client)
-        if self.cap_id is not None:
-            p.removeBody(self.cap_id, physicsClientId=self.client)
-        if self.gripper_id is not None:
-            p.removeBody(self.gripper_id, physicsClientId=self.client)
+        for obj_id in [self.object_to_pickup_id, self.obstacle_1_id, self.obstacle_2_id,
+                       self.target_marker_id, self.gripper_id]:
+            if obj_id is not None:
+                p.removeBody(obj_id, physicsClientId=self.client)
+
         if self.grasp_constraint is not None:
             p.removeConstraint(self.grasp_constraint, physicsClientId=self.client)
             self.grasp_constraint = None
 
-        # Create marker (dynamic object)
-        self.marker_start_pos = np.array([marker_start[0], marker_start[1], self.MARKER_SPAWN_HEIGHT])
-        self.marker_id = p.createMultiBody(
+        # Create object to pickup (dynamic, red in visualization)
+        obj_pos = positions_3d['object_to_pickup']
+        self.object_to_pickup_id = p.createMultiBody(
             baseMass=self.MARKER_MASS,
             baseCollisionShapeIndex=self.marker_shape,
-            basePosition=self.marker_start_pos.tolist(),
+            basePosition=obj_pos.tolist(),
             physicsClientId=self.client
         )
 
-        # Create goal marker on floor (visual reference for "place here")
-        floor_z = 0.02  # Just above floor to be visible
-        self.cap_goal_pos = np.array([floor_goal[0], floor_goal[1], floor_z])
-        self.cap_id = p.createMultiBody(
+        # Create obstacle 1 (dynamic, blue in visualization)
+        obs1_pos = positions_3d['obstacle_1']
+        self.obstacle_1_id = p.createMultiBody(
+            baseMass=self.MARKER_MASS,
+            baseCollisionShapeIndex=self.marker_shape,
+            basePosition=obs1_pos.tolist(),
+            physicsClientId=self.client
+        )
+
+        # Create obstacle 2 (dynamic, yellow in visualization)
+        obs2_pos = positions_3d['obstacle_2']
+        self.obstacle_2_id = p.createMultiBody(
+            baseMass=self.MARKER_MASS,
+            baseCollisionShapeIndex=self.marker_shape,
+            basePosition=obs2_pos.tolist(),
+            physicsClientId=self.client
+        )
+
+        # Create target zone marker on floor (static, green in visualization)
+        target_pos = positions_3d['target_zone']
+        self.target_marker_id = p.createMultiBody(
             baseMass=0,  # Static
             baseCollisionShapeIndex=self.cap_shape,
-            basePosition=self.cap_goal_pos.tolist(),
+            basePosition=target_pos.tolist(),
             physicsClientId=self.client
         )
 
         # Create gripper (kinematic control)
-        self.gripper_pos = np.array([0.0, 0.0, self.GRIPPER_START_HEIGHT])
+        self.gripper_pos = positions_3d['gripper_start'].copy()
         self.gripper_id = p.createMultiBody(
-            baseMass=0,  # Kinematic (mass doesn't matter)
+            baseMass=0,  # Kinematic
             baseCollisionShapeIndex=self.gripper_shape,
             basePosition=self.gripper_pos.tolist(),
             physicsClientId=self.client
         )
 
+        # Store positions for state queries
+        self.object_positions = positions_3d
+
         # Reset state flags
         self.gripper_closed = False
-        self.grasped = False
+        self.grasped_object_id = None
         self.step_count = 0
 
         # Let objects settle
@@ -222,35 +250,40 @@ class PickPlaceSimulation:
             physicsClientId=self.client
         )
 
-        # Get current marker position
-        marker_pos_raw, _ = p.getBasePositionAndOrientation(
-            self.marker_id,
-            physicsClientId=self.client
-        )
-        marker_pos = np.array(marker_pos_raw)
+        # Grasp logic - check all graspable objects
+        graspable_objects = [
+            (self.object_to_pickup_id, 'object_to_pickup'),
+            (self.obstacle_1_id, 'obstacle_1'),
+            (self.obstacle_2_id, 'obstacle_2'),
+        ]
 
-        # Grasp logic
-        distance_to_marker = np.linalg.norm(self.gripper_pos - marker_pos)
+        if self.gripper_closed and self.grasped_object_id is None:
+            # Try to grasp nearby object
+            for obj_id, obj_name in graspable_objects:
+                obj_pos_raw, _ = p.getBasePositionAndOrientation(obj_id, physicsClientId=self.client)
+                obj_pos = np.array(obj_pos_raw)
+                distance = np.linalg.norm(self.gripper_pos - obj_pos)
 
-        if self.gripper_closed and distance_to_marker < self.GRASP_DISTANCE_THRESHOLD and not self.grasped:
-            # Initiate grasp - create fixed constraint
-            self.grasped = True
-            self.grasp_constraint = p.createConstraint(
-                self.gripper_id, -1,
-                self.marker_id, -1,
-                p.JOINT_FIXED,
-                [0, 0, 0],
-                [0, 0, -self.GRIPPER_RADIUS - self.MARKER_HEIGHT/2],  # Offset
-                [0, 0, 0],
-                physicsClientId=self.client
-            )
+                if distance < self.GRASP_DISTANCE_THRESHOLD:
+                    # Grasp this object
+                    self.grasped_object_id = obj_id
+                    self.grasp_constraint = p.createConstraint(
+                        self.gripper_id, -1,
+                        obj_id, -1,
+                        p.JOINT_FIXED,
+                        [0, 0, 0],
+                        [0, 0, -self.GRIPPER_RADIUS - self.MARKER_HEIGHT/2],
+                        [0, 0, 0],
+                        physicsClientId=self.client
+                    )
+                    break
 
-        elif not self.gripper_closed and self.grasped:
+        elif not self.gripper_closed and self.grasped_object_id is not None:
             # Release grasp
             if self.grasp_constraint is not None:
                 p.removeConstraint(self.grasp_constraint, physicsClientId=self.client)
                 self.grasp_constraint = None
-            self.grasped = False
+            self.grasped_object_id = None
 
         # Step physics simulation (multiple substeps for stability)
         for _ in range(self.NUM_SUBSTEPS):
@@ -265,20 +298,21 @@ class PickPlaceSimulation:
         Get current simulation state.
 
         Returns:
-            Immutable state snapshot
+            Immutable state snapshot with all object positions
         """
-        # Get marker position from physics
-        marker_pos_raw, _ = p.getBasePositionAndOrientation(
-            self.marker_id,
-            physicsClientId=self.client
-        )
-        marker_pos = np.array(marker_pos_raw)
+        # Get object positions from physics
+        obj_pos_raw, _ = p.getBasePositionAndOrientation(self.object_to_pickup_id, physicsClientId=self.client)
+        obs1_pos_raw, _ = p.getBasePositionAndOrientation(self.obstacle_1_id, physicsClientId=self.client)
+        obs2_pos_raw, _ = p.getBasePositionAndOrientation(self.obstacle_2_id, physicsClientId=self.client)
+        target_pos_raw, _ = p.getBasePositionAndOrientation(self.target_marker_id, physicsClientId=self.client)
 
         return SimState(
             gripper_pos=self.gripper_pos.copy(),
-            marker_pos=marker_pos.copy(),
-            cap_pos=self.cap_goal_pos.copy(),
-            grasped=self.grasped,
+            object_to_pickup_pos=np.array(obj_pos_raw),
+            obstacle_1_pos=np.array(obs1_pos_raw),
+            obstacle_2_pos=np.array(obs2_pos_raw),
+            target_pos=np.array(target_pos_raw),
+            grasped_object_id=self.grasped_object_id,
             gripper_closed=self.gripper_closed,
             step_count=self.step_count
         )
@@ -296,62 +330,76 @@ if __name__ == "__main__":
     sim = PickPlaceSimulation(headless=True)
     print("✓ Simulation initialized")
 
-    # Reset with marker on table center, goal on floor
-    state = sim.reset(marker_start=(0.0, 0.0), floor_goal=(0.2, 0.3))
-    print(f"✓ Reset complete")
-    print(f"  Marker at: {state.marker_pos}")
-    print(f"  Cap at: {state.cap_pos}")
-    print(f"  Gripper at: {state.gripper_pos}")
+    # Reset with manual calibration from world 1
+    state = sim.reset(world_id=1)
+    print(f"✓ Reset complete (using manual calibration)")
+    print(f"  Object to pickup: {state.object_to_pickup_pos}")
+    print(f"  Obstacle 1: {state.obstacle_1_pos}")
+    print(f"  Obstacle 2: {state.obstacle_2_pos}")
+    print(f"  Target zone: {state.target_pos}")
+    print(f"  Gripper: {state.gripper_pos}")
 
-    # Test movement toward marker
-    print("\nTesting movement toward marker...")
+    # Test movement toward object
+    print("\nTesting movement toward object_to_pickup...")
     for i in range(15):
-        # Calculate direction to marker
-        to_marker = state.marker_pos - state.gripper_pos
-        to_marker[2] = 0  # Only move in XY plane
-        to_marker_norm = to_marker / (np.linalg.norm(to_marker) + 1e-6)
+        # Calculate direction to object
+        to_object = state.object_to_pickup_pos - state.gripper_pos
+        to_object[2] = 0  # Only move in XY plane
+        to_object_norm = to_object / (np.linalg.norm(to_object) + 1e-6)
 
-        # Move gripper toward marker
+        # Move gripper toward object
         action = {
-            'delta_x': to_marker_norm[0] * 0.02,
-            'delta_y': to_marker_norm[1] * 0.02,
+            'delta_x': to_object_norm[0] * 0.02,
+            'delta_y': to_object_norm[1] * 0.02,
             'gripper': 0.0  # Open
         }
         state = sim.step(action)
 
         if i % 5 == 0:
-            dist = np.linalg.norm(state.gripper_pos - state.marker_pos)
-            print(f"  Step {i}: gripper at {state.gripper_pos[:2]}, distance to marker: {dist:.3f}m")
+            dist = np.linalg.norm(state.gripper_pos - state.object_to_pickup_pos)
+            print(f"  Step {i}: gripper at {state.gripper_pos[:2]}, distance: {dist:.3f}m")
 
-    dist_before_grasp = np.linalg.norm(state.gripper_pos - state.marker_pos)
+    dist_before_grasp = np.linalg.norm(state.gripper_pos - state.object_to_pickup_pos)
     print(f"\nDistance before grasp: {dist_before_grasp:.3f}m (threshold: {sim.GRASP_DISTANCE_THRESHOLD}m)")
 
     # Test grasp
     print("Testing grasp...")
     action = {'delta_x': 0.0, 'delta_y': 0.0, 'gripper': 1.0}  # Close gripper
     state = sim.step(action)
-    print(f"  Grasped: {state.grasped}")
+    print(f"  Grasped object ID: {state.grasped_object_id}")
 
-    if state.grasped:
-        # Test transport
-        print("\nTesting transport to goal...")
+    if state.grasped_object_id is not None:
+        # Test transport to floor target
+        print("\nTesting transport to floor target...")
         for i in range(20):
+            # Move toward target
+            to_target = state.target_pos - state.gripper_pos
+            to_target[2] = min(to_target[2], 0)  # Move down toward floor
+            to_target_norm = to_target / (np.linalg.norm(to_target) + 1e-6)
+
             action = {
-                'delta_x': 0.03,  # Move right toward goal
-                'delta_y': 0.0,
+                'delta_x': to_target_norm[0] * 0.03,
+                'delta_y': to_target_norm[1] * 0.03,
                 'gripper': 1.0  # Keep closed
             }
             state = sim.step(action)
 
             if i % 5 == 0:
-                dist_to_goal = np.linalg.norm(state.marker_pos - state.cap_pos)
-                print(f"  Step {i}: marker at {state.marker_pos[:2]}, distance to goal: {dist_to_goal:.3f}m")
+                dist_to_goal = np.linalg.norm(state.object_to_pickup_pos - state.target_pos)
+                print(f"  Step {i}: object at Z={state.object_to_pickup_pos[2]:.3f}m, distance to goal: {dist_to_goal:.3f}m")
 
         # Test release
-        print("\nTesting release...")
+        print("\nTesting release onto floor...")
         action = {'delta_x': 0.0, 'delta_y': 0.0, 'gripper': 0.0}  # Open
         state = sim.step(action)
-        print(f"  Released: {not state.grasped}")
+        print(f"  Released: {state.grasped_object_id is None}")
+
+        # Let object settle on floor
+        for _ in range(20):
+            state = sim.step({'delta_x': 0.0, 'delta_y': 0.0, 'gripper': 0.0})
+
+        print(f"  Object final Z: {state.object_to_pickup_pos[2]:.3f}m (floor is at 0.00m)")
+        print(f"  Object settled on floor: {state.object_to_pickup_pos[2] < 0.10}")
 
     # Clean up
     sim.close()
