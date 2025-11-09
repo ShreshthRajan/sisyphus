@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "sisyphus",
+			"path": "../../.."
+		},
+		{
+			"name": "spark-physics",
+			"path": "../../../../../Downloads/sisyphus/spark-physics"
+		}
+	],
+	"settings": {}
+}

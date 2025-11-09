@@ -560,7 +560,7 @@ export class TaskExecutor {
           object: obj,
           target: {
             x: leftTarget.x + (idx % 3) * 0.2,  // 3 columns
-            y: leftTarget.y + 0.1,  // Place slightly above desk to prevent falling through
+            y: leftTarget.y + 0.2,  // Place 20cm above desk to prevent falling through
             z: leftTarget.z + Math.floor(idx / 3) * 0.25  // Rows
           }
         });
@@ -574,7 +574,7 @@ export class TaskExecutor {
           object: obj,
           target: {
             x: booksTarget.x - (idx % 2) * 0.3,  // 2 columns
-            y: booksTarget.y + 0.1,  // Place slightly above desk to prevent falling through
+            y: booksTarget.y + 0.2,  // Place 20cm above desk to prevent falling through
             z: booksTarget.z + Math.floor(idx / 2) * 0.3  // Rows
           }
         });

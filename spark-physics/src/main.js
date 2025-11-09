@@ -1337,9 +1337,9 @@ async function init() {
 		// Move to initial position
 		taskSystem.gripper.body.setTranslation(robotHandPosition, true);
 
-		console.log("✓ Shrek gripper installed");
+		console.log("✓ Robot hand gripper installed");
 	}).catch((error) => {
-		console.warn("Shrek failed to load, keeping red ball gripper:", error);
+		console.warn("Robot hand failed to load, keeping red ball gripper:", error);
 	});
 
 	// Expose task system globally for console testing

@@ -19,25 +19,32 @@ export async function createRobotHandGripper(world, scene, initialPosition = { x
     let gripperScale = 0.15;  // Adjust based on actual model size
 
     try {
-        // Try to load Shrek as gripper
+        // Try to load robot hand as gripper
         const result = await new Promise((resolve, reject) => {
             gltfLoader.load(
-                '/models/shrek.glb',
+                '/models/robot_hand.glb',
                 (gltf) => resolve(gltf),
                 (progress) => {
-                    console.log(`Loading Shrek gripper: ${(progress.loaded / progress.total * 100).toFixed(0)}%`);
+                    console.log(`Loading robot hand: ${(progress.loaded / progress.total * 100).toFixed(0)}%`);
                 },
                 (error) => reject(error)
             );
         });
 
         gripperMesh = result.scene;
-        gripperMesh.scale.set(0.3, 0.3, 0.3);  // Shrek-appropriate scale
+        gripperMesh.scale.set(0.15, 0.15, 0.15);  // Robot hand scale
 
-        // Keep original Shrek materials (green skin, etc)
-        // No material modification needed
+        // Apply metallic material
+        gripperMesh.traverse((child) => {
+            if (child.isMesh) {
+                child.material = child.material.clone();
+                child.material.metalness = 0.9;
+                child.material.roughness = 0.3;
+                child.material.color.setHex(0x808080);  // Gray metal
+            }
+        });
 
-        console.log('✓ Shrek gripper loaded');
+        console.log('✓ Robot hand loaded');
     } catch (error) {
         console.warn('Robot hand model not found, using fallback geometric gripper');
 
@@ -59,12 +66,12 @@ export async function createRobotHandGripper(world, scene, initialPosition = { x
         .setSensor(true);
     world.createCollider(colliderDesc, body);
 
-    console.log(`✓ Shrek gripper created at (${initialPosition.x.toFixed(2)}, ${initialPosition.y.toFixed(2)}, ${initialPosition.z.toFixed(2)})`);
+    console.log(`✓ Robot hand gripper created at (${initialPosition.x.toFixed(2)}, ${initialPosition.y.toFixed(2)}, ${initialPosition.z.toFixed(2)})`);
 
     return {
         mesh: gripperMesh,
         body,
-        scale: 0.3  // Return Shrek scale
+        scale: gripperScale
     };
 }
 
