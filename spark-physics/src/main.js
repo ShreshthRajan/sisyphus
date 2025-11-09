@@ -84,8 +84,8 @@ const CONFIG = {
 
 	// Assets
 	ENVIRONMENT: {
-		MESH: "world2glb.glb",
-		SPLATS: "world2spz.spz",
+		MESH: "world1glb.glb",
+		SPLATS: "world1spz.spz",
 		SPLAT_SCALE: 3,
 		// Mesh scaling - adjust if environment appears flipped or wrong size
 		MESH_SCALE: { x: -1, y: -1, z: 1 },
@@ -1312,8 +1312,11 @@ async function init() {
 	}
 
 	// ===== TASK SYSTEM INITIALIZATION =====
-	taskSystem = initializeTaskSystem(world, scene);
-	console.log("✓ Task system initialized");
+	// Detect world ID from environment config
+	const worldId = CONFIG.ENVIRONMENT.MESH.includes('world3') ? 3 :
+	                CONFIG.ENVIRONMENT.MESH.includes('world1') ? 1 : 2;
+
+	taskSystem = initializeTaskSystem(world, scene, worldId);
 
 	// ===== RL SYSTEM INITIALIZATION =====
 	const rlEnv = initializeRLSystem(taskSystem.objectManager, taskSystem.gripper, taskSystem.pathPlanner, world);
@@ -1615,9 +1618,74 @@ async function init() {
 		renderer.setSize(window.innerWidth, window.innerHeight);
 	});
 
+	// ===== NATURAL LANGUAGE INTERFACE =====
+	const nlToggle = document.getElementById('nlToggle');
+	const nlInput = document.getElementById('nlInput');
+	const nlCommand = document.getElementById('nlCommand');
+	const nlSubmit = document.getElementById('nlSubmit');
+	const nlStatus = document.getElementById('nlStatus');
+
+	let nlVisible = false;
+
+	nlToggle.addEventListener('click', () => {
+		nlVisible = !nlVisible;
+		nlInput.style.display = nlVisible ? 'block' : 'none';
+		if (nlVisible) {
+			nlCommand.focus();
+		}
+	});
+
+	function showStatus(message, duration = 3000) {
+		nlStatus.textContent = message;
+		nlStatus.style.display = 'block';
+		setTimeout(() => {
+			nlStatus.style.display = 'none';
+		}, duration);
+	}
+
+	function executeNaturalLanguage(command) {
+		console.log(`\n🗣️ Natural language: "${command}"`);
+		showStatus(`Processing: "${command}"`, 2000);
+
+		// Parse for multiple commands (AND/THEN)
+		const commands = command.split(/\s+and\s+|\s+then\s+/i);
+
+		for (const cmd of commands) {
+			const trimmed = cmd.trim();
+			if (!trimmed) continue;
+
+			console.log(`  → Executing: "${trimmed}"`);
+			taskSystem.executor.executeCommand(trimmed);
+		}
+
+		showStatus(`✓ Executing ${commands.length} command(s)`, 5000);
+	}
+
+	nlSubmit.addEventListener('click', () => {
+		const command = nlCommand.value.trim();
+		if (command) {
+			executeNaturalLanguage(command);
+			nlCommand.value = '';
+		}
+	});
+
+	nlCommand.addEventListener('keypress', (e) => {
+		if (e.key === 'Enter') {
+			const command = nlCommand.value.trim();
+			if (command) {
+				executeNaturalLanguage(command);
+				nlCommand.value = '';
+			}
+		}
+	});
+
 	// Start the animation loop
 	animate(previousTime);
 	console.log("🚀 Tavern demo initialized successfully!");
+	console.log("\n💬 Natural Language Interface:");
+	console.log("  Click green chat button (bottom right) to open NL input");
+	console.log('  Try: "clean my desk and remove trash"');
+	console.log('  Try: "organize the items"');
 }
 
 // Initialize the application

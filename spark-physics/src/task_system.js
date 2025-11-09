@@ -159,7 +159,8 @@ export class AutoGripper {
     this.graspedObject = null;
     this.graspConstraint = null;
     this.targetPosition = null;
-    this.moveSpeed = 2.0;  // m/s
+    this.moveSpeed = 1.0;  // m/s (slower for careful movement)
+    this.moveSpeedHolding = 0.6;  // m/s when holding object (extra careful)
   }
 
   /**
@@ -174,8 +175,9 @@ export class AutoGripper {
 
     if (distance < 0.01) return true;  // Reached target
 
-    // Move at constant speed
-    const step = Math.min(this.moveSpeed * deltaTime, distance);
+    // Use slower speed when holding object (more careful)
+    const speed = this.graspedObject ? this.moveSpeedHolding : this.moveSpeed;
+    const step = Math.min(speed * deltaTime, distance);
     const ratio = step / distance;
 
     // Constrain Y to never go below desk surface (prevent going under)
@@ -285,17 +287,23 @@ export class LanguageParser {
   static parse(command) {
     const cmd = command.toLowerCase().trim();
 
-    // "clean desk" / "throw trash on ground" / "remove trash"
-    if ((cmd.includes('clean') || cmd.includes('throw') || cmd.includes('remove')) &&
-        (cmd.includes('trash') || cmd.includes('desk'))) {
+    // "clean my desk" / "clean desk" / "clean up" / "remove trash" / "throw trash"
+    if (cmd.includes('clean') || cmd.includes('remove trash') || cmd.includes('throw trash')) {
       return {
         type: 'clean_table',
         target: 'off_table'
       };
     }
 
-    // "organize desk" / "organize items"
-    if (cmd.includes('organize') && (cmd.includes('desk') || cmd.includes('items'))) {
+    // "organize" / "organize desk" / "organize items" / "organize the items"
+    if (cmd.includes('organize')) {
+      // If specifically mentions color, do color grouping
+      if (cmd.includes('color')) {
+        return {
+          type: 'organize_by_color'
+        };
+      }
+      // Otherwise organize by semantic groups (utensils/books)
       return {
         type: 'organize_desk'
       };
@@ -334,20 +342,64 @@ export class LanguageParser {
  * Simple path planner (straight-line with collision avoidance)
  */
 export class PathPlanner {
-  constructor(objectManager, tableCenter = { x: 1.5, y: -2.5, z: 7.2 }, tableRadius = 2.0) {
+  constructor(objectManager, world_id = 2, tableCenter = { x: 1.5, y: -2.5, z: 7.2 }, tableRadius = 2.0) {
     this.objectManager = objectManager;
+    this.world_id = world_id;
     this.tableCenter = tableCenter;
     this.tableRadius = tableRadius;
 
-    // Desk bounds (expanded to catch ALL objects on desk)
-    this.deskBounds = {
-      minX: -0.5,   // Expanded to catch edge objects
-      maxX: 3.5,    // Expanded
-      minY: -3.5,   // Expanded down (catch objects in mesh)
-      maxY: -0.5,   // Expanded up
-      minZ: 5.0,    // Back edge (expanded)
-      maxZ: 9.0     // Front edge (expanded)
+    // Per-world desk bounds (manually calibrated from player positions)
+    const WORLD_BOUNDS = {
+      2: {  // World 2 - Rectangular desk
+        minX: -0.5,
+        maxX: 3.5,
+        minY: -3.5,
+        maxY: -0.5,
+        minZ: 5.0,
+        maxZ: 9.0,
+        centerX: 1.5,
+        centerY: -2.0,
+        centerZ: 7.0
+      },
+      3: {  // World 3 - Circular table (from 4 player positions)
+        // Players: (0.346, 2.886), (-0.833, 3.552), (-0.274, 4.734), (1.066, 4.171)
+        // Opposite points: (0.346, 2.886) ↔ (-0.274, 4.734)
+        // Distance: sqrt((0.346-(-0.274))² + (2.886-4.734)²) = sqrt(0.384 + 3.417) = 1.95m
+        // Radius ≈ 1.0m, center ≈ (0.0, -0.7, 3.8)
+        minX: -1.2,   // Center -1.0 radius
+        maxX: 1.2,    // Center +1.0 radius
+        minY: -1.2,   // Below table surface
+        maxY: -0.2,   // Above table surface
+        minZ: 2.6,    // Center -1.2 radius
+        maxZ: 5.0,    // Center +1.2 radius
+        centerX: 0.0,
+        centerY: -0.7,
+        centerZ: 3.8
+      },
+      1: {  // World 1 - Different desk (from earlier player positions)
+        minX: -6.0,   // From player at -5.448
+        maxX: -1.0,   // From player at -1.570
+        minY: -1.5,
+        maxY: -0.5,
+        minZ: 0.0,    // From player at 0.172
+        maxZ: 4.0,    // From player at 3.339
+        centerX: -3.5,
+        centerY: -1.0,
+        centerZ: 2.0
+      }
     };
+
+    // Use world-specific bounds
+    this.deskBounds = WORLD_BOUNDS[world_id] || WORLD_BOUNDS[2];
+
+    // Update table center from bounds
+    this.tableCenter = {
+      x: this.deskBounds.centerX,
+      y: this.deskBounds.centerY,
+      z: this.deskBounds.centerZ
+    };
+
+    console.log(`✓ Using World ${world_id} desk bounds:`, this.deskBounds);
   }
 
   /**
@@ -386,14 +438,14 @@ export class PathPlanner {
    */
   getTargetZones(taskType) {
     const zones = {
-      // Organize zones (ON desk surface, well within bounds)
-      'left': { x: this.deskBounds.minX + 0.5, y: -2.5, z: this.tableCenter.z },  // Left side, safely on desk
-      'right': { x: this.deskBounds.maxX - 0.5, y: -2.5, z: this.tableCenter.z }, // Right side, safely on desk
-      'corner': { x: this.deskBounds.maxX - 0.5, y: -2.5, z: this.deskBounds.maxZ - 0.5 },
-      'center': { x: this.tableCenter.x, y: -2.5, z: this.tableCenter.z },
+      // Organize zones (ON desk surface, ABOVE to prevent falling through)
+      'left': { x: this.deskBounds.minX + 0.5, y: -2.0, z: this.tableCenter.z },  // Higher placement
+      'right': { x: this.deskBounds.maxX - 0.5, y: -2.0, z: this.tableCenter.z }, // Higher placement
+      'corner': { x: this.deskBounds.maxX - 0.5, y: -2.0, z: this.deskBounds.maxZ - 0.5 },
+      'center': { x: this.tableCenter.x, y: -2.0, z: this.tableCenter.z },
 
       // Trash zone (OFF desk edge, drop over left edge)
-      'off_table': { x: this.deskBounds.minX - 0.3, y: -2.5, z: this.tableCenter.z }  // Just off left edge
+      'off_table': { x: this.deskBounds.minX - 0.3, y: -2.0, z: this.tableCenter.z }  // Just off left edge
     };
 
     return zones[taskType] || zones['center'];
@@ -508,7 +560,7 @@ export class TaskExecutor {
           object: obj,
           target: {
             x: leftTarget.x + (idx % 3) * 0.2,  // 3 columns
-            y: leftTarget.y,
+            y: leftTarget.y + 0.1,  // Place slightly above desk to prevent falling through
             z: leftTarget.z + Math.floor(idx / 3) * 0.25  // Rows
           }
         });
@@ -522,7 +574,7 @@ export class TaskExecutor {
           object: obj,
           target: {
             x: booksTarget.x - (idx % 2) * 0.3,  // 2 columns
-            y: booksTarget.y,
+            y: booksTarget.y + 0.1,  // Place slightly above desk to prevent falling through
             z: booksTarget.z + Math.floor(idx / 2) * 0.3  // Rows
           }
         });
@@ -613,13 +665,14 @@ export class TaskExecutor {
       this.stuckTimer += deltaTime;
     }
 
-    // If stuck for 3 seconds, skip task
-    if (this.stuckTimer > 3.0) {
-      console.warn(`  ⚠ Gripper stuck for 3s, skipping task for object ${task.object.id}`);
+    // If stuck for 1.5 seconds, skip task and continue
+    if (this.stuckTimer > 1.5) {
+      console.warn(`  ⚠ Gripper stuck for 1.5s, skipping object ${task.object.id} (${task.object.type})`);
       this.gripper.release();
       this.taskQueue.shift();
       this.currentAction = null;
       this.stuckTimer = 0;
+      this.lastGripperPos = null;
       return;
     }
 
@@ -727,13 +780,13 @@ export class TaskExecutor {
 /**
  * Initialize task system (no auto-spawning - use manual block placement)
  */
-export function initializeTaskSystem(world, scene) {
+export function initializeTaskSystem(world, scene, world_id = 2) {
   const objectManager = new ObjectManager(world, scene);
   const gripper = new AutoGripper(world, scene);
-  const pathPlanner = new PathPlanner(objectManager);
+  const pathPlanner = new PathPlanner(objectManager, world_id);
   const executor = new TaskExecutor(objectManager, gripper, pathPlanner);
 
-  console.log('✓ Task system initialized (spawn objects manually with B key)');
+  console.log(`✓ Task system initialized for World ${world_id}`);
 
   return { objectManager, gripper, pathPlanner, executor };
 }
