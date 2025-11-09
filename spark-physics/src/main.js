@@ -89,7 +89,7 @@ const CONFIG = {
 		// Mesh scaling - adjust if environment appears flipped or wrong size
 		MESH_SCALE: { x: -1, y: -1, z: 1 },
 		// Initial spawn position - will be adjusted to ground level after environment loads
-		SPAWN_POSITION: { x: 0, y: 2, z: 0 },
+		SPAWN_POSITION: { x: 4.05, y: 0.98, z: 4.37 },
 	},
 
 	CHARACTERS: {
@@ -371,6 +371,8 @@ async function init() {
 	const jengaBlocks = [];
 	// Map rapier body handle -> mesh for generic lookup (projectiles, jenga, etc.)
 	const bodyToMesh = new Map();
+	// Store original materials for overlay mode
+	const originalObjectMaterials = new Map(); // mesh.uuid -> material or material[]
 	// Set of projectile rigid body handles (ignored for hover/grab)
 	const projectileBodies = new Set();
 	// Mesh → body mapping and list of grabbable meshes for THREE.Raycaster
@@ -943,9 +945,8 @@ async function init() {
 
 		// ===== REALISTIC OBJECT SPAWNING (Keys 1-6) =====
 		if (controls.isLocked) {
-			if (e.code === "Digit1") {
-				spawnPencil(world, scene, camera, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem);
-			}
+			// Key 1: Pencil - DISABLED (can't see it, removed)
+
 			if (e.code === "Digit2") {
 				spawnPen(world, scene, camera, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem);
 			}
@@ -1083,18 +1084,25 @@ async function init() {
 	
 	// Overlay mode - show both splats and collision mesh
 	let overlayMode = false;
-	const overlayMaterial = new THREE.MeshBasicMaterial({ 
-		color: 0x00ff00, 
-		wireframe: true, 
-		transparent: true, 
-		opacity: 0.3 
+	const overlayMaterial = new THREE.MeshBasicMaterial({
+		color: 0x00ff00,
+		wireframe: true,
+		transparent: true,
+		opacity: 0.3
+	});
+	// Pink wireframe for spawned objects
+	const objectOverlayMaterial = new THREE.MeshBasicMaterial({
+		color: 0xff00ff,  // Pink
+		wireframe: true,
+		transparent: true,
+		opacity: 0.8
 	});
 	
 	function toggleOverlayMode() {
 		if (!environment || !splatMesh || !splatsLoaded) return;
-		
+
 		overlayMode = !overlayMode;
-		
+
 		if (overlayMode) {
 			console.log("🔍 Overlay mode ON - showing collision mesh over splats");
 			// Show both splats and collision mesh
@@ -1102,8 +1110,8 @@ async function init() {
 			if (!scene.children.includes(splatMesh)) {
 				scene.add(splatMesh);
 			}
-			
-			// Make collision mesh semi-transparent wireframe
+
+			// Make collision mesh semi-transparent wireframe (green)
 			environment.traverse((child) => {
 				if (child.isMesh) {
 					if (!originalEnvMaterials.has(child.uuid)) {
@@ -1112,17 +1120,56 @@ async function init() {
 					child.material = overlayMaterial;
 				}
 			});
+
+			// Show spawned objects as PINK wireframes
+			for (const block of jengaBlocks) {
+				if (block.mesh && block.mesh.isMesh) {
+					// Save original material
+					if (!originalObjectMaterials.has(block.mesh.uuid)) {
+						originalObjectMaterials.set(block.mesh.uuid, block.mesh.material);
+					}
+					block.mesh.material = objectOverlayMaterial;
+				} else if (block.mesh && block.mesh.isGroup) {
+					// Handle GLB models (groups of meshes)
+					block.mesh.traverse((child) => {
+						if (child.isMesh) {
+							if (!originalObjectMaterials.has(child.uuid)) {
+								originalObjectMaterials.set(child.uuid, child.material);
+							}
+							child.material = objectOverlayMaterial;
+						}
+					});
+				}
+			}
+
+			console.log(`✓ Showing ${jengaBlocks.length} objects in pink wireframe`);
 		} else {
 			console.log("🔍 Overlay mode OFF");
 			// Return to normal mode (splats only)
 			environment.visible = false;
-			
-			// Restore original materials
+
+			// Restore original environment materials
 			environment.traverse((child) => {
 				if (child.isMesh && originalEnvMaterials.has(child.uuid)) {
 					child.material = originalEnvMaterials.get(child.uuid);
 				}
 			});
+
+			// Restore original object materials
+			for (const block of jengaBlocks) {
+				if (block.mesh && block.mesh.isMesh) {
+					if (originalObjectMaterials.has(block.mesh.uuid)) {
+						block.mesh.material = originalObjectMaterials.get(block.mesh.uuid);
+					}
+				} else if (block.mesh && block.mesh.isGroup) {
+					// Handle GLB models (groups of meshes)
+					block.mesh.traverse((child) => {
+						if (child.isMesh && originalObjectMaterials.has(child.uuid)) {
+							child.material = originalObjectMaterials.get(child.uuid);
+						}
+					});
+				}
+			}
 		}
 	}
 
@@ -1486,10 +1533,12 @@ async function init() {
 	}
 
 	function updateHover() {
-		// Clear previous highlight
+		// Clear previous highlight (handle both simple mesh and GLB child meshes)
 		if (hover.mesh && hover.savedEmissive != null) {
 			const m = hover.mesh.material;
-			if (m && m.emissive) m.emissive.setHex(hover.savedEmissive);
+			if (m && m.emissive) {
+				m.emissive.setHex(hover.savedEmissive);
+			}
 		}
 		hover = { body: null, mesh: null, savedEmissive: null };
 

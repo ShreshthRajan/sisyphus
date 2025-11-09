@@ -41,12 +41,25 @@ async function loadModel(path) {
 
 /**
  * Helper to register object in all tracking systems
+ * Handles both simple Mesh objects and GLB model Groups
  */
 function registerObject(mesh, body, objData, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem) {
     jengaBlocks.push({ mesh, body });
     bodyToMesh.set(body.handle, mesh);
-    meshToBody.set(mesh, body);
-    grabbableMeshes.push(mesh);
+
+    // For GLB models (Groups), add all child meshes to grabbable list
+    if (mesh.isGroup || mesh.isObject3D) {
+        mesh.traverse((child) => {
+            if (child.isMesh) {
+                meshToBody.set(child, body);
+                grabbableMeshes.push(child);
+            }
+        });
+    } else {
+        // Simple mesh
+        meshToBody.set(mesh, body);
+        grabbableMeshes.push(mesh);
+    }
 
     if (taskSystem) {
         taskSystem.objectManager.objects.push(objData);
@@ -72,9 +85,18 @@ export async function spawnPencil(world, scene, camera, jengaBlocks, bodyToMesh,
 
     try {
         const pencilModel = await loadModel('/models/pencil.glb');
-        pencilModel.scale.set(0.0003, 0.0003, 0.0003);  // Match block scale (~0.2)
+        pencilModel.scale.set(0.03, 0.03, 0.03);  // 2x bigger to be visible
         pencilModel.position.copy(spawnPos);
         pencilModel.rotation.x = Math.PI / 2;  // Lay horizontal
+
+        // Enable emissive for hover highlighting
+        pencilModel.traverse((child) => {
+            if (child.isMesh && child.material) {
+                child.material.emissive = child.material.emissive || new THREE.Color(0x000000);
+                child.material.emissiveIntensity = 0;
+            }
+        });
+
         scene.add(pencilModel);
 
         // Cylinder collider (same size as blocks ~0.2 scale)
@@ -117,9 +139,18 @@ export async function spawnPen(world, scene, camera, jengaBlocks, bodyToMesh, me
 
     try {
         const penModel = await loadModel('/models/pen.glb');
-        penModel.scale.set(0.0003, 0.0003, 0.0003);
+        penModel.scale.set(0.000118, 0.000592, 0.000118);  // 1.3x smaller again
         penModel.position.copy(spawnPos);
-        penModel.rotation.x = Math.PI / 2;
+        penModel.rotation.z = Math.PI / 2;  // Rotate around Z to make horizontal
+
+        // Enable emissive for hover highlighting
+        penModel.traverse((child) => {
+            if (child.isMesh && child.material) {
+                child.material.emissive = child.material.emissive || new THREE.Color(0x000000);
+                child.material.emissiveIntensity = 0;
+            }
+        });
+
         scene.add(penModel);
 
         const radius = 0.01;
@@ -129,7 +160,8 @@ export async function spawnPen(world, scene, camera, jengaBlocks, bodyToMesh, me
             .setTranslation(spawnPos.x, spawnPos.y, spawnPos.z)
             .setCanSleep(true)
             .setLinearDamping(0.5)
-            .setAngularDamping(0.5);
+            .setAngularDamping(0.5)
+            .lockRotations(true);  // Lock rotation to prevent tumbling
         const body = world.createRigidBody(bodyDesc);
         const collider = RAPIER.ColliderDesc.cylinder(height/2, radius)
             .setFriction(0.6)
@@ -160,9 +192,18 @@ export async function spawnMarker(world, scene, camera, jengaBlocks, bodyToMesh,
 
     try {
         const markerModel = await loadModel('/models/marker.glb');
-        markerModel.scale.set(0.0004, 0.0004, 0.0004);
+        markerModel.scale.set(0.0525, 0.0525, 0.0525);  // 1.4x bigger from 0.0375
         markerModel.position.copy(spawnPos);
         markerModel.rotation.x = Math.PI / 2;
+
+        // Enable emissive for hover highlighting
+        markerModel.traverse((child) => {
+            if (child.isMesh && child.material) {
+                child.material.emissive = child.material.emissive || new THREE.Color(0x000000);
+                child.material.emissiveIntensity = 0;
+            }
+        });
+
         scene.add(markerModel);
 
         const radius = 0.015;
@@ -172,7 +213,8 @@ export async function spawnMarker(world, scene, camera, jengaBlocks, bodyToMesh,
             .setTranslation(spawnPos.x, spawnPos.y, spawnPos.z)
             .setCanSleep(true)
             .setLinearDamping(0.5)
-            .setAngularDamping(0.5);
+            .setAngularDamping(0.5)
+            .lockRotations(true);  // Lock rotation to prevent tumbling
         const body = world.createRigidBody(bodyDesc);
         const collider = RAPIER.ColliderDesc.cylinder(height/2, radius)
             .setFriction(0.7)
@@ -203,8 +245,17 @@ export async function spawnBook(world, scene, camera, jengaBlocks, bodyToMesh, m
 
     try {
         const bookModel = await loadModel('/models/book.glb');
-        bookModel.scale.set(0.001, 0.001, 0.001);
+        bookModel.scale.set(0.6, 0.6, 0.6);  // 1.5x bigger from 0.4
         bookModel.position.copy(spawnPos);
+
+        // Enable emissive for hover highlighting
+        bookModel.traverse((child) => {
+            if (child.isMesh && child.material) {
+                child.material.emissive = child.material.emissive || new THREE.Color(0x000000);
+                child.material.emissiveIntensity = 0;
+            }
+        });
+
         scene.add(bookModel);
 
         // Book dimensions (flat rectangle, match block scale)
@@ -216,7 +267,8 @@ export async function spawnBook(world, scene, camera, jengaBlocks, bodyToMesh, m
             .setTranslation(spawnPos.x, spawnPos.y, spawnPos.z)
             .setCanSleep(true)
             .setLinearDamping(0.8)
-            .setAngularDamping(0.8);
+            .setAngularDamping(0.8)
+            .lockRotations(true);  // Lock rotation to prevent tumbling
         const body = world.createRigidBody(bodyDesc);
         const collider = RAPIER.ColliderDesc.cuboid(width/2, height/2, depth/2)
             .setFriction(0.9)
@@ -247,8 +299,18 @@ export async function spawnCrumpledPaper(world, scene, camera, jengaBlocks, body
 
     try {
         const paperModel = await loadModel('/models/crumpled_paper.glb');
-        paperModel.scale.set(0.0006, 0.0006, 0.0006);
+        paperModel.scale.set(0.00107, 0.00107, 0.00107);  // 1.5x smaller
         paperModel.position.copy(spawnPos);
+
+        // Enable emissive for hover highlighting and make white
+        paperModel.traverse((child) => {
+            if (child.isMesh && child.material) {
+                child.material.color = new THREE.Color(0xffffff);  // White paper
+                child.material.emissive = child.material.emissive || new THREE.Color(0x000000);
+                child.material.emissiveIntensity = 0;
+            }
+        });
+
         scene.add(paperModel);
 
         const radius = 0.08;
@@ -257,7 +319,8 @@ export async function spawnCrumpledPaper(world, scene, camera, jengaBlocks, body
             .setTranslation(spawnPos.x, spawnPos.y, spawnPos.z)
             .setCanSleep(true)
             .setLinearDamping(0.3)
-            .setAngularDamping(0.3);
+            .setAngularDamping(0.3)
+            .lockRotations(true);  // Lock rotation only (still falls with gravity)
         const body = world.createRigidBody(bodyDesc);
         const collider = RAPIER.ColliderDesc.ball(radius)
             .setFriction(0.5)
@@ -288,8 +351,17 @@ export async function spawnSodaCan(world, scene, camera, jengaBlocks, bodyToMesh
 
     try {
         const canModel = await loadModel('/models/soda_can.glb');
-        canModel.scale.set(0.0004, 0.0004, 0.0004);
+        canModel.scale.set(0.04, 0.04, 0.04);  // 2x smaller
         canModel.position.copy(spawnPos);
+
+        // Enable emissive for hover highlighting
+        canModel.traverse((child) => {
+            if (child.isMesh && child.material) {
+                child.material.emissive = child.material.emissive || new THREE.Color(0x000000);
+                child.material.emissiveIntensity = 0;
+            }
+        });
+
         scene.add(canModel);
 
         const radius = 0.06;
@@ -329,7 +401,13 @@ export async function spawnSodaCan(world, scene, camera, jengaBlocks, bodyToMesh
 
 function spawnGeometricPencil(world, scene, camera, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem, spawnPos, color = 0x000000, radius = 0.01, height = 0.2) {
     const geom = new THREE.CylinderGeometry(radius, radius, height, 8);
-    const mat = new THREE.MeshStandardMaterial({ color, metalness: 0.2, roughness: 0.7 });
+    const mat = new THREE.MeshStandardMaterial({
+        color,
+        metalness: 0.2,
+        roughness: 0.7,
+        emissive: new THREE.Color(0x000000),
+        emissiveIntensity: 0
+    });
     const mesh = new THREE.Mesh(geom, mat);
     mesh.position.copy(spawnPos);
     scene.add(mesh);
@@ -366,7 +444,13 @@ function spawnGeometricBook(world, scene, camera, jengaBlocks, bodyToMesh, meshT
     const depth = 0.4;
 
     const geom = new THREE.BoxGeometry(width, height, depth);
-    const mat = new THREE.MeshStandardMaterial({ color: 0x8b4513, metalness: 0.1, roughness: 0.9 });
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0x8b4513,
+        metalness: 0.1,
+        roughness: 0.9,
+        emissive: new THREE.Color(0x000000),
+        emissiveIntensity: 0
+    });
     const mesh = new THREE.Mesh(geom, mat);
     mesh.position.copy(spawnPos);
     scene.add(mesh);
@@ -400,7 +484,13 @@ function spawnGeometricBook(world, scene, camera, jengaBlocks, bodyToMesh, meshT
 function spawnGeometricPaper(world, scene, camera, jengaBlocks, bodyToMesh, meshToBody, grabbableMeshes, taskSystem, spawnPos) {
     const radius = 0.08;
     const geom = new THREE.IcosahedronGeometry(radius, 1);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, metalness: 0.0, roughness: 1.0 });
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0xeeeeee,
+        metalness: 0.0,
+        roughness: 1.0,
+        emissive: new THREE.Color(0x000000),
+        emissiveIntensity: 0
+    });
     const mesh = new THREE.Mesh(geom, mat);
     mesh.position.copy(spawnPos);
     scene.add(mesh);
@@ -436,7 +526,13 @@ function spawnGeometricCan(world, scene, camera, jengaBlocks, bodyToMesh, meshTo
     const height = 0.2;
 
     const geom = new THREE.CylinderGeometry(radius, radius, height, 16);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xff0000, metalness: 0.8, roughness: 0.2 });
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0xff0000,
+        metalness: 0.8,
+        roughness: 0.2,
+        emissive: new THREE.Color(0x000000),
+        emissiveIntensity: 0
+    });
     const mesh = new THREE.Mesh(geom, mat);
     mesh.position.copy(spawnPos);
     scene.add(mesh);
