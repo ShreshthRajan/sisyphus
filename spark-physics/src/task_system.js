@@ -414,6 +414,8 @@ export class TaskExecutor {
     this.executing = false;
     this.currentWaypoint = 0;
     this.currentAction = null;
+    this.stuckTimer = 0;
+    this.lastGripperPos = null;
   }
 
   /**
@@ -583,41 +585,46 @@ export class TaskExecutor {
    * Update task execution (call every frame)
    */
   update(deltaTime) {
-    if (!this.executing) {
-      // Don't log every frame, just return
-      return;
-    }
+    if (!this.executing) return;
 
     if (this.taskQueue.length === 0) {
       this.executing = false;
-      console.log('✅ Task queue empty, stopping executor');
       return;
     }
 
     const task = this.taskQueue[0];
-
-    if (!task) {
-      console.error('❌ Task is undefined but queue length is', this.taskQueue.length);
-      this.taskQueue = [];
-      this.executing = false;
-      return;
-    }
-
-    if (!task.object || !task.object.body) {
-      console.error(`❌ Task object invalid for task:`, task);
+    if (!task || !task.object || !task.object.body) {
       this.taskQueue.shift();
       this.currentAction = null;
       return;
     }
 
+    // Stuck detection
+    const gripperPos = this.gripper.getPosition();
+    const moved = !this.lastGripperPos ||
+      Math.abs(gripperPos.x - this.lastGripperPos.x) > 0.01 ||
+      Math.abs(gripperPos.y - this.lastGripperPos.y) > 0.01 ||
+      Math.abs(gripperPos.z - this.lastGripperPos.z) > 0.01;
+
+    if (moved) {
+      this.stuckTimer = 0;
+      this.lastGripperPos = gripperPos;
+    } else {
+      this.stuckTimer += deltaTime;
+    }
+
+    // If stuck for 3 seconds, skip task
+    if (this.stuckTimer > 3.0) {
+      console.warn(`  ⚠ Gripper stuck for 3s, skipping task for object ${task.object.id}`);
+      this.gripper.release();
+      this.taskQueue.shift();
+      this.currentAction = null;
+      this.stuckTimer = 0;
+      return;
+    }
+
     if (task.type === 'pick_and_place') {
-      try {
-        this.executePickAndPlace(task, deltaTime);
-      } catch (error) {
-        console.error(`❌ Error executing task:`, error);
-        this.taskQueue.shift();
-        this.currentAction = null;
-      }
+      this.executePickAndPlace(task, deltaTime);
     }
   }
 
@@ -671,9 +678,8 @@ export class TaskExecutor {
     }
 
     else if (this.currentAction === 'transport') {
-      // Move to target at DESK HEIGHT (no Z movement, stay on desk)
-      const deskHeight = -2.5;  // Stay on desk surface
-      if (this.gripper.moveTo({ x: task.target.x, y: deskHeight, z: task.target.z }, deltaTime)) {
+      // Move to target at SAME HEIGHT as pickup (stay on desk)
+      if (this.gripper.moveTo({ x: task.target.x, y: this.pickupPosition.y, z: task.target.z }, deltaTime)) {
         this.currentAction = 'release';
       }
     }
