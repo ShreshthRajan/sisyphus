@@ -393,15 +393,55 @@ export class TaskExecutor {
     const tasks = [];
 
     if (parsed.type === 'clean_table') {
-      // Move all objects off table
+      // Move ONLY TRASH objects off table to floor
+      const trashObjects = this.objectManager.findObjects({ group: 'trash' });
       const target = this.pathPlanner.getTargetZones('off_table');
-      for (const obj of this.objectManager.objects) {
+
+      console.log(`  Found ${trashObjects.length} trash items to remove`);
+
+      for (const obj of trashObjects) {
         tasks.push({
           type: 'pick_and_place',
           object: obj,
-          target: { ...target, x: target.x + Math.random() * 0.2 - 0.1 }  // Spread out
+          target: { ...target, x: target.x + Math.random() * 0.4 - 0.2 }  // Spread trash on floor
         });
       }
+    }
+
+    else if (parsed.type === 'organize_desk') {
+      // Organize items: utensils → left, books → right
+      const utensils = this.objectManager.findObjects({ group: 'utensils' });
+      const books = this.objectManager.findObjects({ group: 'books' });
+
+      console.log(`  Organizing ${utensils.length} utensils and ${books.length} books`);
+
+      // Utensils go to left side of desk
+      const utensilsTarget = this.pathPlanner.getTargetZones('left');
+      utensils.forEach((obj, idx) => {
+        tasks.push({
+          type: 'pick_and_place',
+          object: obj,
+          target: {
+            ...utensilsTarget,
+            x: utensilsTarget.x + (idx * 0.15),  // Line them up
+            z: utensilsTarget.z + (idx % 2) * 0.1  // Stagger slightly
+          }
+        });
+      });
+
+      // Books go to right side of desk
+      const booksTarget = this.pathPlanner.getTargetZones('right');
+      books.forEach((obj, idx) => {
+        tasks.push({
+          type: 'pick_and_place',
+          object: obj,
+          target: {
+            ...booksTarget,
+            x: booksTarget.x + (idx * 0.2),  // Stack books
+            z: booksTarget.z
+          }
+        });
+      });
     }
 
     else if (parsed.type === 'organize_by_color') {
