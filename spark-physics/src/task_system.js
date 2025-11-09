@@ -266,11 +266,19 @@ export class LanguageParser {
   static parse(command) {
     const cmd = command.toLowerCase().trim();
 
-    // "clean table" or "clean up"
-    if (cmd.includes('clean')) {
+    // "clean desk" / "throw trash on ground" / "remove trash"
+    if ((cmd.includes('clean') || cmd.includes('throw') || cmd.includes('remove')) &&
+        (cmd.includes('trash') || cmd.includes('desk'))) {
       return {
         type: 'clean_table',
-        target: 'off_table'  // Move all objects off table
+        target: 'off_table'
+      };
+    }
+
+    // "organize desk" / "organize items"
+    if (cmd.includes('organize') && (cmd.includes('desk') || cmd.includes('items'))) {
+      return {
+        type: 'organize_desk'
       };
     }
 
@@ -307,7 +315,7 @@ export class LanguageParser {
  * Simple path planner (straight-line with collision avoidance)
  */
 export class PathPlanner {
-  constructor(objectManager, tableCenter = { x: 0, y: 0.9, z: 0 }, tableRadius = 0.4) {
+  constructor(objectManager, tableCenter = { x: 1.5, y: -2.0, z: 6.5 }, tableRadius = 1.2) {
     this.objectManager = objectManager;
     this.tableCenter = tableCenter;
     this.tableRadius = tableRadius;
@@ -337,11 +345,11 @@ export class PathPlanner {
    */
   getTargetZones(taskType) {
     const zones = {
-      'corner': { x: this.tableCenter.x + 0.3, y: this.tableCenter.y, z: this.tableCenter.z + 0.3 },
-      'left': { x: this.tableCenter.x - 0.3, y: this.tableCenter.y, z: this.tableCenter.z },
-      'right': { x: this.tableCenter.x + 0.3, y: this.tableCenter.y, z: this.tableCenter.z },
+      'corner': { x: this.tableCenter.x + 0.8, y: this.tableCenter.y, z: this.tableCenter.z + 0.8 },
+      'left': { x: this.tableCenter.x - 0.8, y: this.tableCenter.y, z: this.tableCenter.z },
+      'right': { x: this.tableCenter.x + 0.8, y: this.tableCenter.y, z: this.tableCenter.z },
       'center': { x: this.tableCenter.x, y: this.tableCenter.y, z: this.tableCenter.z },
-      'off_table': { x: this.tableCenter.x - 0.6, y: 0.05, z: this.tableCenter.z }  // Floor beside table
+      'off_table': { x: this.tableCenter.x - 2.0, y: -3.0, z: this.tableCenter.z }  // Floor far from desk
     };
 
     return zones[taskType] || zones['center'];
@@ -397,15 +405,19 @@ export class TaskExecutor {
       const trashObjects = this.objectManager.findObjects({ group: 'trash' });
       const target = this.pathPlanner.getTargetZones('off_table');
 
-      console.log(`  Found ${trashObjects.length} trash items to remove`);
+      console.log(`  🗑️ Found ${trashObjects.length} trash items to remove`);
 
-      for (const obj of trashObjects) {
+      trashObjects.forEach((obj, idx) => {
         tasks.push({
           type: 'pick_and_place',
           object: obj,
-          target: { ...target, x: target.x + Math.random() * 0.4 - 0.2 }  // Spread trash on floor
+          target: {
+            x: target.x + (idx * 0.3),  // Spread trash out on floor
+            y: target.y,
+            z: target.z + (idx % 2) * 0.3  // Stagger in 2 rows
+          }
         });
-      }
+      });
     }
 
     else if (parsed.type === 'organize_desk') {
@@ -536,16 +548,20 @@ export class TaskExecutor {
     }
 
     else if (this.currentAction === 'lift') {
-      // Lift object
-      const current = this.gripper.getPosition();
-      if (this.gripper.moveTo({ ...current, y: current.y + 0.15 }, deltaTime)) {
+      // Lift object to safe height (absolute Y, not relative)
+      const objPos = task.object.body.translation();
+      const liftHeight = Math.max(objPos.y + 0.3, -1.5);  // Lift 0.3m above object, min Y=-1.5
+
+      if (this.gripper.moveTo({ x: objPos.x, y: liftHeight, z: objPos.z }, deltaTime)) {
         this.currentAction = 'transport';
+        this.liftHeight = liftHeight;  // Store for transport phase
       }
     }
 
     else if (this.currentAction === 'transport') {
-      // Move to target
-      if (this.gripper.moveTo({ ...task.target, y: task.target.y + 0.15 }, deltaTime)) {
+      // Move to target XZ at lift height
+      const transportHeight = this.liftHeight || -1.5;
+      if (this.gripper.moveTo({ x: task.target.x, y: transportHeight, z: task.target.z }, deltaTime)) {
         this.currentAction = 'lower';
       }
     }
@@ -564,13 +580,16 @@ export class TaskExecutor {
     }
 
     else if (this.currentAction === 'retreat') {
-      // Move gripper away
+      // Move gripper to safe parking position
+      const parkingHeight = -1.5;  // Fixed height above desk
       const current = this.gripper.getPosition();
-      if (this.gripper.moveTo({ ...current, y: current.y + 0.2 }, deltaTime)) {
+
+      if (this.gripper.moveTo({ x: current.x, y: parkingHeight, z: current.z }, deltaTime)) {
         // Task complete
         console.log(`  ✓ Completed task for object ${task.object.id}`);
         this.taskQueue.shift();
         this.currentAction = null;
+        this.liftHeight = null;  // Reset lift height
 
         if (this.taskQueue.length === 0) {
           this.executing = false;

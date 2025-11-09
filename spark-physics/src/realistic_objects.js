@@ -141,7 +141,7 @@ export async function spawnPen(world, scene, camera, jengaBlocks, bodyToMesh, me
         const penModel = await loadModel('/models/pen.glb');
         penModel.scale.set(0.000118, 0.000592, 0.000118);  // 1.3x smaller again
         penModel.position.copy(spawnPos);
-        penModel.rotation.z = Math.PI / 2;  // Rotate around Z to make horizontal
+        penModel.rotation.set(Math.PI / 2, 0, 0);  // Rotate around X to lay flat
 
         // Enable emissive for hover highlighting
         penModel.traverse((child) => {
@@ -194,7 +194,7 @@ export async function spawnMarker(world, scene, camera, jengaBlocks, bodyToMesh,
         const markerModel = await loadModel('/models/marker.glb');
         markerModel.scale.set(0.0525, 0.0525, 0.0525);  // 1.4x bigger from 0.0375
         markerModel.position.copy(spawnPos);
-        markerModel.rotation.x = Math.PI / 2;
+        markerModel.rotation.set(Math.PI / 2, 0, 0);  // Rotate around X to lay flat
 
         // Enable emissive for hover highlighting
         markerModel.traverse((child) => {

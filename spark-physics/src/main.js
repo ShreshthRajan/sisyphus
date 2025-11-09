@@ -1372,13 +1372,51 @@ async function init() {
 		console.log(success ? '✓ Released' : '✗ Not holding anything');
 	};
 
-	console.log("\n🎮 Commands:");
+	console.log("\n🎮 Manual Commands:");
 	console.log("  getState()  ← Get all object states");
 	console.log("  testMove(x, y, z)  ← Move gripper to position");
 	console.log("  testGrasp()  ← Grasp nearby object");
 	console.log("  testRelease()  ← Release held object");
-	console.log("\n  testCommand('clean table')");
-	console.log("  testCommand('organize by color')");
+	console.log("\n🤖 Automated Cleaning Commands:");
+	console.log("  testCommand('clean desk')  ← Throw trash on floor");
+	console.log("  testCommand('organize desk')  ← Organize utensils & books");
+	console.log("  testCommand('organize by color')  ← Group by color");
+	console.log("\n📊 Query Commands:");
+	console.log("  taskSystem.objectManager.findObjects({ group: 'trash' })");
+	console.log("  taskSystem.objectManager.findObjects({ group: 'utensils' })");
+	console.log("  taskSystem.objectManager.findObjects({ group: 'books' })");
+
+	// Helper to calculate desk bounds from spawned objects
+	window.getDeskBounds = () => {
+		const state = getState();
+		if (state.length === 0) {
+			console.warn("No objects spawned yet. Spawn some objects first with keys 2-6.");
+			return null;
+		}
+
+		const positions = state.map(s => s.position);
+		const bounds = {
+			minX: Math.min(...positions.map(p => p.x)),
+			maxX: Math.max(...positions.map(p => p.x)),
+			minY: Math.min(...positions.map(p => p.y)),
+			maxY: Math.max(...positions.map(p => p.y)),
+			minZ: Math.min(...positions.map(p => p.z)),
+			maxZ: Math.max(...positions.map(p => p.z)),
+		};
+
+		bounds.centerX = (bounds.minX + bounds.maxX) / 2;
+		bounds.centerY = (bounds.minY + bounds.maxY) / 2;
+		bounds.centerZ = (bounds.minZ + bounds.maxZ) / 2;
+
+		console.log("📐 Desk Bounds:");
+		console.log(`  X: ${bounds.minX.toFixed(2)} to ${bounds.maxX.toFixed(2)} (center: ${bounds.centerX.toFixed(2)})`);
+		console.log(`  Y: ${bounds.minY.toFixed(2)} to ${bounds.maxY.toFixed(2)} (center: ${bounds.centerY.toFixed(2)})`);
+		console.log(`  Z: ${bounds.minZ.toFixed(2)} to ${bounds.maxZ.toFixed(2)} (center: ${bounds.centerZ.toFixed(2)})`);
+		console.log("\n💡 Update task_system.js PathPlanner:");
+		console.log(`  tableCenter = { x: ${bounds.centerX.toFixed(2)}, y: ${bounds.centerY.toFixed(2)}, z: ${bounds.centerZ.toFixed(2)} }`);
+
+		return bounds;
+	};
 
 	// ===== ANIMATION LOOP =====
 	let previousTime = performance.now();
