@@ -731,8 +731,8 @@ export class TaskExecutor {
     }
 
     else if (this.currentAction === 'transport') {
-      // Move to target at SAME HEIGHT as pickup (stay on desk)
-      if (this.gripper.moveTo({ x: task.target.x, y: this.pickupPosition.y, z: task.target.z }, deltaTime)) {
+      // Move to target position (use target Y, not pickup Y)
+      if (this.gripper.moveTo({ x: task.target.x, y: task.target.y, z: task.target.z }, deltaTime)) {
         this.currentAction = 'release';
       }
     }

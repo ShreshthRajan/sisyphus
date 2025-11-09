@@ -84,8 +84,8 @@ const CONFIG = {
 
 	// Assets
 	ENVIRONMENT: {
-		MESH: "world1glb.glb",
-		SPLATS: "world1spz.spz",
+		MESH: "world2glb.glb",
+		SPLATS: "world2spz.spz",
 		SPLAT_SCALE: 3,
 		// Mesh scaling - adjust if environment appears flipped or wrong size
 		MESH_SCALE: { x: -1, y: -1, z: 1 },

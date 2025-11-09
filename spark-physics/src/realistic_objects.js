@@ -159,13 +159,13 @@ export async function spawnPen(world, scene, camera, jengaBlocks, bodyToMesh, me
         const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(spawnPos.x, spawnPos.y, spawnPos.z)
             .setCanSleep(true)
-            .setLinearDamping(0.5)
-            .setAngularDamping(0.5)
+            .setLinearDamping(0.1)  // Match blocks (was 0.5)
+            .setAngularDamping(0.2)  // Match blocks (was 0.5)
             .lockRotations(true);  // Lock rotation to prevent tumbling
         const body = world.createRigidBody(bodyDesc);
         const collider = RAPIER.ColliderDesc.cylinder(height/2, radius)
-            .setFriction(0.6)
-            .setRestitution(0.1);
+            .setFriction(0.8)  // Match blocks (was 0.6)
+            .setRestitution(0.05);  // Match blocks (was 0.1)
         world.createCollider(collider, body);
 
         const objData = {
@@ -212,13 +212,13 @@ export async function spawnMarker(world, scene, camera, jengaBlocks, bodyToMesh,
         const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(spawnPos.x, spawnPos.y, spawnPos.z)
             .setCanSleep(true)
-            .setLinearDamping(0.5)
-            .setAngularDamping(0.5)
+            .setLinearDamping(0.1)
+            .setAngularDamping(0.2)
             .lockRotations(true);  // Lock rotation to prevent tumbling
         const body = world.createRigidBody(bodyDesc);
         const collider = RAPIER.ColliderDesc.cylinder(height/2, radius)
-            .setFriction(0.7)
-            .setRestitution(0.1);
+            .setFriction(0.8)
+            .setRestitution(0.05);
         world.createCollider(collider, body);
 
         const objData = {
@@ -266,13 +266,13 @@ export async function spawnBook(world, scene, camera, jengaBlocks, bodyToMesh, m
         const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(spawnPos.x, spawnPos.y, spawnPos.z)
             .setCanSleep(true)
-            .setLinearDamping(0.8)
-            .setAngularDamping(0.8)
+            .setLinearDamping(0.1)
+            .setAngularDamping(0.2)
             .lockRotations(true);  // Lock rotation to prevent tumbling
         const body = world.createRigidBody(bodyDesc);
         const collider = RAPIER.ColliderDesc.cuboid(width/2, height/2, depth/2)
-            .setFriction(0.9)
-            .setRestitution(0.0);
+            .setFriction(0.8)
+            .setRestitution(0.05);
         world.createCollider(collider, body);
 
         const objData = {
@@ -318,13 +318,13 @@ export async function spawnCrumpledPaper(world, scene, camera, jengaBlocks, body
         const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(spawnPos.x, spawnPos.y, spawnPos.z)
             .setCanSleep(true)
-            .setLinearDamping(0.3)
-            .setAngularDamping(0.3)
+            .setLinearDamping(0.1)
+            .setAngularDamping(0.2)
             .lockRotations(true);  // Lock rotation only (still falls with gravity)
         const body = world.createRigidBody(bodyDesc);
         const collider = RAPIER.ColliderDesc.ball(radius)
-            .setFriction(0.5)
-            .setRestitution(0.2);
+            .setFriction(0.8)
+            .setRestitution(0.05);
         world.createCollider(collider, body);
 
         const objData = {
@@ -370,12 +370,12 @@ export async function spawnSodaCan(world, scene, camera, jengaBlocks, bodyToMesh
         const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
             .setTranslation(spawnPos.x, spawnPos.y, spawnPos.z)
             .setCanSleep(true)
-            .setLinearDamping(0.2)
+            .setLinearDamping(0.1)
             .setAngularDamping(0.2);
         const body = world.createRigidBody(bodyDesc);
         const collider = RAPIER.ColliderDesc.cylinder(height/2, radius)
-            .setFriction(0.4)
-            .setRestitution(0.3);
+            .setFriction(0.8)
+            .setRestitution(0.05);
         world.createCollider(collider, body);
 
         const objData = {
